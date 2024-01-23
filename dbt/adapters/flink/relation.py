@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from dbt.adapters.base.relation import BaseRelation, Policy
 
 
@@ -18,5 +18,5 @@ class FlinkIncludePolicy(Policy):
 
 @dataclass(frozen=True, eq=False, repr=False)
 class FlinkRelation(BaseRelation):
-    include_policy: FlinkIncludePolicy = FlinkIncludePolicy()
-    quote_policy: FlinkQuotePolicy = FlinkQuotePolicy()
+    include_policy: Policy = field(default_factory=FlinkIncludePolicy)
+    quote_policy: Policy = field(default_factory=FlinkQuotePolicy)
