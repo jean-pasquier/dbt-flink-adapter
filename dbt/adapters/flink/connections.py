@@ -3,19 +3,19 @@ import os
 from os.path import expanduser
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Optional, Any, Tuple
+from typing import Optional
 
 import dbt.exceptions  # noqa
 import yaml
 from dbt.adapters.base import Credentials
 from dbt.adapters.sql import SQLConnectionManager  # type: ignore
-from dbt.contracts.connection import Connection
 from dbt.events import AdapterLogger
 
 from dbt.adapters.flink.handler import FlinkHandler, FlinkCursor
 from flink.sqlgateway.client import FlinkSqlGatewayClient
 from flink.sqlgateway.config import SqlGatewayConfig
 from flink.sqlgateway.session import SqlGatewaySession
+
 
 logger = AdapterLogger("Flink")
 
@@ -71,7 +71,7 @@ class FlinkConnectionManager(SQLConnectionManager):
             yield
         except Exception as e:
             logger.error("Exception thrown during execution: {}".format(str(e)))
-            raise dbt.exceptions.RuntimeException(str(e))
+            raise dbt.exceptions.DbtRuntimeError(str(e))
 
     @classmethod
     def open(cls, connection):
@@ -106,31 +106,26 @@ class FlinkConnectionManager(SQLConnectionManager):
 
     @classmethod
     def _read_session_handle(cls, credentials: FlinkCredentials) -> Optional[SqlGatewaySession]:
-        if os.path.isfile(SESSION_FILE_PATH):
-            with open(SESSION_FILE_PATH, "r+") as file:
-                session_file = yaml.load(file, Loader=yaml.FullLoader)
-                session_timestamp = datetime.strptime(
-                    session_file["timestamp"], "%Y-%m-%dT%H:%M:%S"
-                )
+        if not os.path.isfile(SESSION_FILE_PATH):
+            return None
 
-                if (
-                    datetime.now() - session_timestamp
-                ).seconds > credentials.session_idle_timeout_s:
-                    logger.info("Stored session has timeout.")
-                    return None
+        with open(SESSION_FILE_PATH, "r+") as file:
+            session_file = yaml.load(file, Loader=yaml.FullLoader)
 
-                logger.info(
-                    f"Restored session from file. Session handle: {session_file['session_handle']}"
-                )
+        session_timestamp = datetime.strptime(session_file["timestamp"], "%Y-%m-%dT%H:%M:%S")
+        if (datetime.now() - session_timestamp).seconds > credentials.session_idle_timeout_s:
+            logger.info("Stored session has timeout.")
+            return None
 
-                return SqlGatewaySession(
-                    SqlGatewayConfig(credentials.host, credentials.port, credentials.session_name),
-                    session_file["session_handle"],
-                )
-        return None
+        logger.info(f"Restored session from file. Session handle: {session_file['session_handle']}")
+
+        return SqlGatewaySession(
+            SqlGatewayConfig(credentials.host, credentials.port, credentials.session_name),
+            session_file["session_handle"],
+        )
 
     @classmethod
-    def _store_session_handle(self, session: SqlGatewaySession):
+    def _store_session_handle(cls, session: SqlGatewaySession):
         content = {
             "timestamp": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
             "session_handle": session.session_handle,
