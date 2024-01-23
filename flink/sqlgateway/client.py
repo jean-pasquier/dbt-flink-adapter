@@ -4,6 +4,8 @@ from flink.sqlgateway.config import SqlGatewayConfig
 
 
 class FlinkSqlGatewayClient:
+    """High level client: create session & execute SQL statement"""
+
     @staticmethod
     def create_session(host: str, port: int, session_name: str) -> SqlGatewaySession:
         config = SqlGatewayConfig(host, port, session_name)
