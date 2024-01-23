@@ -11,10 +11,6 @@ class SqlGatewayOperation:
     session: SqlGatewaySession
     operation_handle: str
 
-    def __init__(self, session: SqlGatewaySession, operation_handle: str):
-        self.session = session
-        self.operation_handle = operation_handle
-
     @staticmethod
     def execute_statement(session: SqlGatewaySession, sql: str) -> "SqlGatewayOperation":
         statement_request = {"statement": sql}
@@ -26,8 +22,6 @@ class SqlGatewayOperation:
                 "Content-Type": "application/json",
             },
         )
-
-        print(f"SQL gateway response: {json.dumps(response.json())}")
 
         if response.status_code == 200:
             operation_handle = response.json()["operationHandle"]
