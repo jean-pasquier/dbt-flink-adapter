@@ -14,18 +14,19 @@ logger = AdapterLogger("Flink")
 
 
 class FlinkCursor:
-    session: SqlGatewaySession
-    last_operation: Optional[SqlGatewayOperation] = None
-    result_buffer: List[Tuple]
-    buffered_results_counter: int = 0
-    last_result: Optional[SqlGatewayResult] = None
-    last_query_hints: QueryHints = QueryHints()
-    last_query_start_time: Optional[float] = None
+    fetch_interval: float = 0.1
 
-    def __init__(self, session):
+    def __init__(self, session: SqlGatewaySession):
         logger.info("Creating new cursor for session {}".format(session))
         self.session = session
-        self.result_buffer = []
+
+        # Init state
+        self.last_operation: Optional[SqlGatewayOperation] = None
+        self.result_buffer: List[Tuple] = []
+        self.buffered_results_counter: int = 0
+        self.last_result: Optional[SqlGatewayResult] = None
+        self.last_query_hints: QueryHints = QueryHints()
+        self.last_query_start_time: Optional[float] = None
 
     def cancel(self) -> None:
         pass
@@ -40,16 +41,13 @@ class FlinkCursor:
         if self.last_result is None:
             raise Exception("No result after fetch")
 
-        while (
-            not self.last_result.is_end_of_stream
-            and not self._buffered_fetch_max()
-            and not self._exceeded_timeout()
-        ):
-            sleep(0.1)
+        while not self.last_result.is_end_of_stream and not self._buffered_fetch_max() and not self._exceeded_timeout():
+            sleep(self.fetch_interval)
             self._buffer_results()
 
         result = self.result_buffer
-        logger.info("Fetched results from Flink: {}".format(result))
+        logger.info(f"Fetched results from Flink: {result}")
+
         if self.last_query_hints.test_query is True:
             result = self._handle_test_query(result)
         logger.info("Returned results from adapter: {}".format(result))
@@ -92,25 +90,23 @@ class FlinkCursor:
         return None
 
     def execute(self, sql: str, bindings: Optional[Sequence[Any]] = None) -> None:
-        logger.debug('Preparing statement "{}"'.format(sql))
+        logger.debug(f'Preparing statement "{sql}"')
         if bindings is not None:
             sql = sql.format(*[self._convert_binding(binding) for binding in bindings])
-        logger.info('Executing statement "{}"'.format(sql))
-        self.last_query_hints: QueryHints = QueryHintsParser.parse(sql)
-        self._set_query_mode()
-        operation_handle = FlinkSqlGatewayClient.execute_statement(self.session, sql)
-        status = self._wait_till_finished(operation_handle)
-        logger.info(
-            "Statement executed. Status {}, operation handle: {}".format(
-                status, operation_handle.operation_handle
-            )
-        )
-        if status == "ERROR":
-            raise Exception("Statement execution failed")
 
+        logger.info(f'Executing statement "{sql}"')
+
+        self.last_query_hints = QueryHintsParser.parse(sql)
+        self._set_query_mode()
         self.last_query_start_time = self._get_current_timestamp()
 
-        self.last_operation = operation_handle
+        operation = FlinkSqlGatewayClient.execute_statement(self.session, sql)
+        self.last_operation = operation
+
+        status = self._wait_till_finished(operation)
+        logger.info(f"Statement executed. Status {status}, operation handle: {operation.operation_handle}")
+        if status == "ERROR":
+            raise Exception("Statement execution failed")
 
     def _convert_binding(self, binding):
         if isinstance(binding, str):
@@ -133,12 +129,17 @@ class FlinkCursor:
         return tuple(result)
 
     def _buffer_results(self):
-        next_page = self.last_result.next_result_url if self.last_result is not None else None
+        if self.last_result is not None:
+            next_page = self.last_result.next_result_url
+        else:
+            next_page = None
+
         result = self.last_operation.get_result(next_page=next_page)
         for record in result.rows:
             self.buffered_results_counter += 1
             self.result_buffer.append(tuple(record.values()))
             if self._buffered_fetch_max():
+                logger.info("Reached fetch max record")
                 break
         logger.info(f"Buffered: {len(result.rows)} rows")
         self.last_result = result
@@ -147,7 +148,7 @@ class FlinkCursor:
     def _wait_till_finished(operation_handle: SqlGatewayOperation) -> str:
         status = operation_handle.get_status()
         while status == "RUNNING":
-            sleep(0.1)
+            sleep(FlinkCursor.fetch_interval)
             status = operation_handle.get_status()
         return status
 
