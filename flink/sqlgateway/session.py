@@ -1,16 +1,15 @@
-import json
-import requests
+from dataclasses import dataclass
 from typing import Optional
+import json
+
+import requests
 from flink.sqlgateway.config import SqlGatewayConfig
 
 
+@dataclass
 class SqlGatewaySession:
     config: SqlGatewayConfig
     session_handle: Optional[str] = None
-
-    def __init__(self, config: SqlGatewayConfig, session_handle: str):
-        self.config = config
-        self.session_handle = session_handle
 
     @staticmethod
     def create(config: SqlGatewayConfig) -> "SqlGatewaySession":
